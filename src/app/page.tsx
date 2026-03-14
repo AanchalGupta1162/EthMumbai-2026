@@ -119,6 +119,15 @@ function toUiAgentEvent(raw: Record<string, any>): AgentEvent | null {
         status: "done",
         timestamp: now,
       };
+    case "agent_message":
+      return {
+        id: uid(),
+        type: "agent_message",
+        label: "Agent",
+        detail: String((raw.data as Record<string, unknown>).text ?? ""),
+        status: "done",
+        timestamp: now,
+      };
     default:
       return null;
   }
