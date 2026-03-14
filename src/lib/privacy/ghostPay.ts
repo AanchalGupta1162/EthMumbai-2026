@@ -1,86 +1,136 @@
 // src/lib/privacy/ghostPay.ts
-import { createEphemeralWallet } from '../wallets/ephemeral'
-import { createWalletClient, createPublicClient, http, parseUnits } from 'viem'
-import { baseSepolia } from 'viem/chains'
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
 
-type PrivacyEvent = {
-  type: 'wallet_created' | 'delay_applied' | 'payment_sent' | 'data_received' | 'wallet_destroyed'
-  callId: number
-  data: Record<string, any>
-}
+import { createEphemeralWallet } from "../wallets/ephemeral";
+import {
+  x402Client,
+  wrapFetchWithPayment,
+  x402HTTPClient,
+} from "@x402/fetch";
+import { registerExactEvmScheme } from "@x402/evm/exact/client";
+import { toClientEvmSigner } from "@x402/evm";
+import { createPublicClient, http } from "viem";
+import { baseSepolia } from "viem/chains";
 
-export async function ghostPay(
-  url: string,
+// ── Env guards ──────────────────────────────────────────────────────────
+const AIRLINE_API_URL = process.env.NEXT_PUBLIC_AIRLINE_API_URL;
+if (!AIRLINE_API_URL)
+  throw new Error("NEXT_PUBLIC_AIRLINE_API_URL is missing in .env.local");
+
+const BASE_SEPOLIA_RPC = process.env.BASE_SEPOLIA_RPC;
+if (!BASE_SEPOLIA_RPC)
+  throw new Error("BASE_SEPOLIA_RPC is missing in .env.local");
+
+// ── Exported types ──────────────────────────────────────────────────────
+export type PrivacyEvent =
+  | { type: "delay_applied"; callId: number; data: { ms: number } }
+  | {
+      type: "wallet_created";
+      callId: number;
+      data: { address: string; amount: string };
+    }
+  | {
+      type: "payment_sent";
+      callId: number;
+      data: { txHash: string | undefined; scanUrl: string | undefined };
+    }
+  | { type: "data_received"; callId: number; data: Record<string, never> }
+  | {
+      type: "wallet_destroyed";
+      callId: number;
+      data: { address: string };
+    };
+
+// ── Module-level call counter ───────────────────────────────────────────
+let nextCallId = 1;
+
+// ── Main function ───────────────────────────────────────────────────────
+export async function ghostPay<T = any>(
+  path: string,
   body: Record<string, any>,
-  callId: number,
-  onEvent: (e: PrivacyEvent) => void
-) {
-  // Privacy measure 1: Random delay (kills timing correlation)
-  const delayMs = Math.floor(Math.random() * 4000 + 1500)
-  onEvent({ type: 'delay_applied', callId, data: { ms: delayMs } })
-  await new Promise(r => setTimeout(r, delayMs))
+  onEvent?: (event: PrivacyEvent) => void
+): Promise<T> {
+  const currentCallId = nextCallId++;
 
-  // Privacy measure 2: Fresh wallet per call
-  const wallet = await createEphemeralWallet()
-  onEvent({ type: 'wallet_created', callId, data: { address: wallet.address, amount: wallet.fundedAmount } })
+  // STEP 1: Random delay (1500–6000ms) — prevents timing correlation
+  const delayMs = Math.floor(Math.random() * 4500 + 1500);
+  onEvent?.({
+    type: "delay_applied",
+    callId: currentCallId,
+    data: { ms: delayMs },
+  });
+  await new Promise((r) => setTimeout(r, delayMs));
+
+  // STEP 2: Create ephemeral wallet (fresh throwaway per call)
+  const wallet = await createEphemeralWallet();
+  onEvent?.({
+    type: "wallet_created",
+    callId: currentCallId,
+    data: { address: wallet.address, amount: wallet.fundedAmount },
+  });
 
   try {
-    // Step 1: hit endpoint, expect 402
-    const firstRes = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    })
-
-    if (firstRes.status !== 402) throw new Error(`Expected 402, got ${firstRes.status}`)
-    const paymentRequest = await firstRes.json()
-
-    // Step 2: pay from ephemeral wallet
-    const walletClient = createWalletClient({
-      account: wallet.account,
-      chain: baseSepolia,
-      transport: http(process.env.BASE_SEPOLIA_RPC)
-    })
+    // STEP 3: Build x402 client with ephemeral signer
     const publicClient = createPublicClient({
       chain: baseSepolia,
-      transport: http(process.env.BASE_SEPOLIA_RPC)
-    })
+      transport: http(BASE_SEPOLIA_RPC),
+    });
 
-    const usdcAbi = [{
-      name: 'transfer', type: 'function',
-      inputs: [{ name: 'to', type: 'address' }, { name: 'amount', type: 'uint256' }],
-      outputs: [{ type: 'bool' }], stateMutability: 'nonpayable'
-    }] as const
+    const signer = toClientEvmSigner(wallet.account, publicClient);
 
-    const txHash = await walletClient.writeContract({
-      address: process.env.USDC_ADDRESS as `0x${string}`,
-      abi: usdcAbi,
-      functionName: 'transfer',
-      args: [paymentRequest.accepts[0].payTo, BigInt(paymentRequest.accepts[0].maxAmountRequired)]
-    })
+    const client = new x402Client();
+    registerExactEvmScheme(client, { signer });
 
-    await publicClient.waitForTransactionReceipt({ hash: txHash })
-    onEvent({ type: 'payment_sent', callId, data: {
-      txHash,
-      scanUrl: `https://sepolia.basescan.org/tx/${txHash}`
-    }})
+    const fetchWithPayment = wrapFetchWithPayment(fetch, client);
+    const httpClient = new x402HTTPClient(client);
 
-    // Step 3: retry with payment proof
-    const dataRes = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-PAYMENT': txHash
-      },
-      body: JSON.stringify(body)
-    })
+    // STEP 4: Make the paid request via x402
+    const url = `${AIRLINE_API_URL}${path}`;
+    console.log(`[ghostPay] 📡 calling ${url} (call #${currentCallId})`);
 
-    const data = await dataRes.json()
-    onEvent({ type: 'data_received', callId, data: {} })
-    return data
+    const response = await fetchWithPayment(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
+    // STEP 5: Read payment settlement from response headers
+    let txHash: string | undefined;
+    let scanUrl: string | undefined;
+    if (response.ok) {
+      const settlement = httpClient.getPaymentSettleResponse((name) =>
+        response.headers.get(name)
+      );
+      txHash = settlement?.transaction;
+      scanUrl = txHash
+        ? `https://sepolia.basescan.org/tx/${txHash}`
+        : undefined;
+    }
+
+    onEvent?.({
+      type: "payment_sent",
+      callId: currentCallId,
+      data: { txHash, scanUrl },
+    });
+    console.log(`[ghostPay] ✅ payment tx: ${scanUrl ?? "n/a"}`);
+
+    // STEP 6: Return data
+    const data = (await response.json()) as T;
+    onEvent?.({
+      type: "data_received",
+      callId: currentCallId,
+      data: {} as Record<string, never>,
+    });
+
+    return data;
   } finally {
-    wallet.destroy()
-    onEvent({ type: 'wallet_destroyed', callId, data: { address: wallet.address } })
+    // STEP 7: Destroy wallet — key is wiped even on failure
+    wallet.destroy();
+    onEvent?.({
+      type: "wallet_destroyed",
+      callId: currentCallId,
+      data: { address: wallet.address },
+    });
   }
 }

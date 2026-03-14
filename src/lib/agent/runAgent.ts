@@ -1,70 +1,113 @@
 // src/lib/agent/runAgent.ts
-import { ghostPay } from '../privacy/ghostPay'
+import dotenv from "dotenv";
+dotenv.config({ path: ".env.local" });
 
-type TripPolicy = {
-  from: string
-  to: string
-  maxFare: number
-  budget: number
-  autoBook: boolean
-}
+import { ghostPay } from "../privacy/ghostPay";
+import type { PrivacyEvent } from "../privacy/ghostPay";
 
-type AgentEvent = {
-  type: string
-  data: Record<string, any>
-}
+// ── Exported types ──────────────────────────────────────────────────────
+
+export type TripPolicy = {
+  from: string;
+  to: string;
+  maxFare: number;
+  budget: number;
+  autoBook: boolean;
+};
+
+export type FlightResult = {
+  id: string;
+  airline: string;
+  from: string;
+  to: string;
+  fare: number;
+  date: string;
+};
+
+export type BookingResult = {
+  bookingId: string;
+  flight: FlightResult;
+  status: string;
+  bookedAt: number;
+};
+
+export type AgentEvent =
+  | { type: "agent_start"; data: { policy: TripPolicy } }
+  | { type: "checking_fares"; data: { attempt: number } }
+  | { type: "fare_found"; data: { flight: FlightResult } }
+  | { type: "no_match"; data: { attempt: number } }
+  | { type: "booking_triggered"; data: { flight: FlightResult } }
+  | { type: "booked"; data: { booking: BookingResult } }
+  | { type: "budget_exhausted"; data: { spent: number } }
+  | { type: "agent_done"; data: { spent: number } }
+  | { type: "privacy_event"; data: PrivacyEvent };
+
+// ── Main agent loop ─────────────────────────────────────────────────────
 
 export async function runAgent(
   policy: TripPolicy,
-  onEvent: (e: AgentEvent) => void
-) {
-  const AIRLINE_URL = process.env.NEXT_PUBLIC_AIRLINE_API_URL!
-  let spent = 0
-  let callId = 1
+  onEvent: (event: AgentEvent) => void
+): Promise<void> {
+  // STEP 1: Fire agent_start
+  onEvent({ type: "agent_start", data: { policy } });
 
-  onEvent({ type: 'agent_start', data: { policy } })
+  // STEP 2: Initialize spent counter
+  let spent = 0;
 
-  // Poll 3 times (demo scope — real version would loop on a schedule)
+  // STEP 3: Loop up to 3 times
   for (let i = 0; i < 3; i++) {
+    // a. Check budget
     if (spent >= policy.budget) {
-      onEvent({ type: 'budget_exhausted', data: { spent } })
-      break
+      onEvent({ type: "budget_exhausted", data: { spent } });
+      return;
     }
 
-    onEvent({ type: 'checking_fares', data: { attempt: i + 1 } })
+    // b. Fire checking_fares
+    onEvent({ type: "checking_fares", data: { attempt: i + 1 } });
 
-    const result = await ghostPay(
-      `${AIRLINE_URL}/search-flights`,
+    // c. Search flights via ghostPay
+    const result = await ghostPay<{ flights: FlightResult[] }>(
+      "/search-flights",
       { from: policy.from, to: policy.to, maxFare: policy.maxFare },
-      callId++,
-      (e) => onEvent({ type: 'privacy_event', data: e })
-    )
+      (privacyEvent: PrivacyEvent) =>
+        onEvent({ type: "privacy_event", data: privacyEvent })
+    );
 
-    spent += 0.001  // track USDC spent on searches
-    const cheapest = result.flights?.sort((a: any, b: any) => a.fare - b.fare)[0]
+    // d. Increment spent by search cost
+    spent += 0.001;
+
+    // e. Sort by fare ascending, take cheapest
+    const flights = result.flights ?? [];
+    const sorted = flights.sort((a, b) => a.fare - b.fare);
+    const cheapest = sorted[0];
 
     if (!cheapest) {
-      onEvent({ type: 'no_match', data: { attempt: i + 1 } })
-      continue
+      onEvent({ type: "no_match", data: { attempt: i + 1 } });
+      continue;
     }
 
-    onEvent({ type: 'fare_found', data: { flight: cheapest } })
+    // f. Fire fare_found
+    onEvent({ type: "fare_found", data: { flight: cheapest } });
 
-    // Autobook if conditions met
+    // g. Auto-book if conditions met
     if (policy.autoBook && cheapest.fare <= policy.maxFare) {
-      onEvent({ type: 'booking_triggered', data: { flight: cheapest } })
+      onEvent({ type: "booking_triggered", data: { flight: cheapest } });
 
-      const booking = await ghostPay(
-        `${AIRLINE_URL}/book-flight`,
+      const booking = await ghostPay<BookingResult>(
+        "/book-flight",
         { flightId: cheapest.id },
-        callId++,
-        (e) => onEvent({ type: 'privacy_event', data: e })
-      )
+        (privacyEvent: PrivacyEvent) =>
+          onEvent({ type: "privacy_event", data: privacyEvent })
+      );
 
-      onEvent({ type: 'booked', data: { booking } })
-      break  // done
+      spent += 0.005;
+      onEvent({ type: "booked", data: { booking } });
+      return; // done — no more polling
     }
+
+    // h. autoBook false or fare too high — continue looping
   }
 
-  onEvent({ type: 'agent_done', data: { spent } })
+  // STEP 4: Loop ended without booking
+  onEvent({ type: "agent_done", data: { spent } });
 }
