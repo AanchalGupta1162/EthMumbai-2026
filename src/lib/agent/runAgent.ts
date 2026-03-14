@@ -13,6 +13,7 @@ export type TripPolicy = {
   maxFare: number;
   budget: number;
   autoBook: boolean;
+  passenger: { name: string; email: string };
 };
 
 export type FlightResult = {
@@ -26,7 +27,9 @@ export type FlightResult = {
 
 export type BookingResult = {
   bookingId: string;
+  ticketNumber: string;
   flight: FlightResult;
+  passenger: { name: string; email: string };
   status: string;
   bookedAt: number;
 };
@@ -93,9 +96,10 @@ export async function runAgent(
     if (policy.autoBook && cheapest.fare <= policy.maxFare) {
       onEvent({ type: "booking_triggered", data: { flight: cheapest } });
 
+      // IDENTITY RULE: passenger data is ONLY sent during booking, never during search
       const booking = await ghostPay<BookingResult>(
         "/book-flight",
-        { flightId: cheapest.id },
+        { flightId: cheapest.id, passenger: policy.passenger },
         (privacyEvent: PrivacyEvent) =>
           onEvent({ type: "privacy_event", data: privacyEvent })
       );

@@ -6,11 +6,6 @@ import TripForm from "./components/TripForm";
 import AgentActivity from "./components/AgentActivity";
 import PrivacyPanel from "./components/PrivacyPanel";
 import BookingSuccessCard from "./components/BookingSuccessCard";
-import {
-  MOCK_AGENT_SEQUENCE,
-  createMockPrivacyEvent,
-  MOCK_BOOKING,
-} from "./mockEvents";
 import type {
   TripConfig,
   AgentEvent,
@@ -18,6 +13,117 @@ import type {
   BookingResult,
   AgentStatus,
 } from "./types";
+
+// ── Helpers ────────────────────────────────────
+function uid() {
+  return Math.random().toString(36).slice(2, 10);
+}
+
+function truncateAddr(addr: string) {
+  if (addr.length <= 14) return addr;
+  return `${addr.slice(0, 8)}…${addr.slice(-6)}`;
+}
+
+/** Map a raw backend AgentEvent into the UI's display format */
+function toUiAgentEvent(raw: {
+  type: string;
+  data: Record<string, unknown>;
+}): AgentEvent | null {
+  const now = Date.now();
+  switch (raw.type) {
+    case "agent_start":
+      return {
+        id: uid(),
+        type: "agent_start",
+        label: "Agent initialized",
+        detail: `Monitoring fares for ${(raw.data.policy as Record<string, unknown>)?.from ?? "?"} → ${(raw.data.policy as Record<string, unknown>)?.to ?? "?"}`,
+        status: "done",
+        timestamp: now,
+      };
+    case "checking_fares":
+      return {
+        id: uid(),
+        type: "checking_fares",
+        label: `Checking fares — attempt #${raw.data.attempt}`,
+        detail: "Querying airline fare endpoint…",
+        status: "active",
+        timestamp: now,
+      };
+    case "fare_found": {
+      const f = raw.data.flight as Record<string, unknown>;
+      return {
+        id: uid(),
+        type: "fare_found",
+        label: "Fare match found",
+        detail: `${f?.airline} ${f?.from}→${f?.to} ₹${Number(f?.fare).toLocaleString()}`,
+        status: "done",
+        timestamp: now,
+      };
+    }
+    case "no_match":
+      return {
+        id: uid(),
+        type: "no_match",
+        label: "No matching fares",
+        detail: `Attempt #${raw.data.attempt} — will retry`,
+        status: "done",
+        timestamp: now,
+      };
+    case "booking_triggered": {
+      const f = raw.data.flight as Record<string, unknown>;
+      return {
+        id: uid(),
+        type: "booking_triggered",
+        label: "Booking triggered",
+        detail: `Auto-booking ${f?.airline} ${f?.from}→${f?.to}`,
+        status: "active",
+        timestamp: now,
+      };
+    }
+    case "booked": {
+      const b = raw.data.booking as Record<string, unknown>;
+      return {
+        id: uid(),
+        type: "booked",
+        label: "Booking confirmed ✓",
+        detail: `${b?.bookingId} — ticket ${b?.ticketNumber}`,
+        status: "done",
+        timestamp: now,
+      };
+    }
+    case "budget_exhausted":
+      return {
+        id: uid(),
+        type: "budget_exhausted",
+        label: "Budget exhausted",
+        detail: `Spent: ${raw.data.spent}`,
+        status: "done",
+        timestamp: now,
+      };
+    case "agent_done":
+      return {
+        id: uid(),
+        type: "agent_done",
+        label: "Agent completed",
+        detail: "All tasks finished — your identity was never revealed",
+        status: "done",
+        timestamp: now,
+      };
+    default:
+      return null;
+  }
+}
+
+// ── Privacy event tracking ────────────────────
+// We group individual PrivacyEvents (from ghostPay) per callId into full PrivacyEvent cards.
+type PrivacyCallRecord = {
+  callId: number;
+  walletAddress: string;
+  fundingAmount: string;
+  txHash: string;
+  actions: { action: PrivacyEvent["actions"][number]["action"]; timestamp: number }[];
+  status: "active" | "complete";
+};
 
 export default function Home() {
   // ── State ──────────────────────────────────
@@ -27,6 +133,7 @@ export default function Home() {
     maxFare: 4500,
     budget: 0.01,
     autoBook: true,
+    passenger: { name: "", email: "" },
   });
 
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle");
@@ -35,10 +142,68 @@ export default function Home() {
   const [booking, setBooking] = useState<BookingResult | null>(null);
   const [showBooking, setShowBooking] = useState(false);
 
-  const timersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // Track privacy calls by callId for grouping
+  const privacyCallsRef = useRef<Map<number, PrivacyCallRecord>>(new Map());
+  const privacyCountRef = useRef(0);
 
-  // ── Start agent (mock demo) ────────────────
-  // Replace this function body with real SSE subscription later.
+  const flushPrivacyEvents = useCallback(() => {
+    const records = Array.from(privacyCallsRef.current.values());
+    const asEvents: PrivacyEvent[] = records.map((r) => ({
+      id: `privacy-${r.callId}`,
+      walletAddress: r.walletAddress,
+      fundingAmount: r.fundingAmount,
+      txHash: r.txHash,
+      actions: r.actions,
+      status: r.status,
+    }));
+    setPrivacyEvents(asEvents);
+  }, []);
+
+  // ── Process a raw backend privacy event ────
+  const handlePrivacyEvent = useCallback(
+    (pe: { type: string; callId: number; data: Record<string, unknown> }) => {
+      const callId = pe.callId;
+      if (!privacyCallsRef.current.has(callId)) {
+        privacyCallsRef.current.set(callId, {
+          callId,
+          walletAddress: "",
+          fundingAmount: "",
+          txHash: "",
+          actions: [],
+          status: "active",
+        });
+      }
+      const record = privacyCallsRef.current.get(callId)!;
+      const now = Date.now();
+
+      switch (pe.type) {
+        case "delay_applied":
+          record.actions.push({ action: "delay_applied", timestamp: now });
+          break;
+        case "wallet_created":
+          record.walletAddress = String(pe.data.address ?? "");
+          record.fundingAmount = `${pe.data.amount ?? "?"} USDC`;
+          record.actions.push({ action: "wallet_created", timestamp: now });
+          break;
+        case "payment_sent":
+          record.txHash = String(pe.data.txHash ?? pe.data.scanUrl ?? "");
+          record.actions.push({ action: "payment_sent", timestamp: now });
+          break;
+        case "data_received":
+          record.actions.push({ action: "data_received", timestamp: now });
+          break;
+        case "wallet_destroyed":
+          record.actions.push({ action: "wallet_destroyed", timestamp: now });
+          record.status = "complete";
+          break;
+      }
+
+      flushPrivacyEvents();
+    },
+    [flushPrivacyEvents]
+  );
+
+  // ── Start agent (real SSE) ────────────────
   const startAgent = useCallback(() => {
     // Reset
     setAgentEvents([]);
@@ -46,49 +211,137 @@ export default function Home() {
     setBooking(null);
     setShowBooking(false);
     setAgentStatus("running");
+    privacyCallsRef.current = new Map();
+    privacyCountRef.current = 0;
 
-    // Clear any leftover timers
-    timersRef.current.forEach(clearTimeout);
-    timersRef.current = [];
+    const body = {
+      from: tripConfig.from,
+      to: tripConfig.to,
+      maxFare: tripConfig.maxFare,
+      budget: tripConfig.budget,
+      autoBook: tripConfig.autoBook,
+      passenger: tripConfig.passenger,
+    };
 
-    let cumulativeDelay = 0;
-    let privacyIndex = 0;
-
-    MOCK_AGENT_SEQUENCE.forEach(([delayMs, factory], i) => {
-      cumulativeDelay += delayMs;
-
-      const timer = setTimeout(() => {
-        const event = factory();
-
-        // Mark previously "active" events as "done"
-        setAgentEvents((prev) => {
-          const updated = prev.map((e) =>
-            e.status === "active" ? { ...e, status: "done" as const } : e
-          );
-          return [...updated, event];
-        });
-
-        // Inject privacy event on payment_required steps
-        if (event.type === "payment_required") {
-          const pEvent = createMockPrivacyEvent(privacyIndex++);
-          setPrivacyEvents((prev) => [...prev, pEvent]);
+    fetch("/api/agent/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+      .then(async (res) => {
+        if (!res.ok || !res.body) {
+          setAgentStatus("error");
+          return;
         }
 
-        // Show booking overlay on 'booked' event
-        if (event.type === "booked") {
-          setBooking(MOCK_BOOKING);
-          setTimeout(() => setShowBooking(true), 400);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const jsonStr = line.slice(6).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const raw = JSON.parse(jsonStr) as {
+                type: string;
+                data: Record<string, unknown>;
+              };
+
+              // Handle privacy events (nested from ghostPay)
+              if (raw.type === "privacy_event") {
+                const pe = raw.data as {
+                  type: string;
+                  callId: number;
+                  data: Record<string, unknown>;
+                };
+                handlePrivacyEvent(pe);
+                privacyCountRef.current++;
+
+                // Also add a UI timeline event for payment_sent
+                if (pe.type === "payment_sent") {
+                  setAgentEvents((prev) => {
+                    const updated = prev.map((e) =>
+                      e.status === "active" ? { ...e, status: "done" as const } : e
+                    );
+                    return [
+                      ...updated,
+                      {
+                        id: uid(),
+                        type: "payment_required" as const,
+                        label: "x402 payment sent",
+                        detail: `Ephemeral wallet ${truncateAddr(String(pe.data.txHash ?? ""))}`,
+                        status: "done" as const,
+                        timestamp: Date.now(),
+                      },
+                    ];
+                  });
+                }
+                continue;
+              }
+
+              // Handle booked — extract booking result for overlay
+              if (raw.type === "booked") {
+                const b = raw.data.booking as Record<string, unknown>;
+                const flight = b?.flight as Record<string, unknown>;
+                const passenger = b?.passenger as Record<string, unknown>;
+                if (flight) {
+                  setBooking({
+                    bookingId: String(b?.bookingId ?? ""),
+                    ticketNumber: String(b?.ticketNumber ?? ""),
+                    airline: String(flight.airline ?? ""),
+                    from: String(flight.from ?? ""),
+                    to: String(flight.to ?? ""),
+                    fare: Number(flight.fare ?? 0),
+                    date: String(flight.date ?? ""),
+                    passenger: {
+                      name: String(passenger?.name ?? tripConfig.passenger.name),
+                      email: String(passenger?.email ?? tripConfig.passenger.email),
+                    },
+                    totalPaid: Number((privacyCountRef.current * 0.001).toFixed(4)),
+                    privacyCalls: privacyCallsRef.current.size,
+                  });
+                  setTimeout(() => setShowBooking(true), 400);
+                }
+              }
+
+              // Map to UI agent event
+              const uiEvent = toUiAgentEvent(raw);
+              if (uiEvent) {
+                setAgentEvents((prev) => {
+                  const updated = prev.map((e) =>
+                    e.status === "active" ? { ...e, status: "done" as const } : e
+                  );
+                  return [...updated, uiEvent];
+                });
+              }
+
+              // Mark complete on agent_done
+              if (raw.type === "agent_done") {
+                setAgentStatus("completed");
+              }
+            } catch {
+              // Skip malformed JSON
+            }
+          }
         }
 
-        // Mark agent complete on last event
-        if (i === MOCK_AGENT_SEQUENCE.length - 1) {
-          setAgentStatus("completed");
-        }
-      }, cumulativeDelay);
-
-      timersRef.current.push(timer);
-    });
-  }, []);
+        // Stream ended
+        setAgentStatus((prev) => (prev === "running" ? "completed" : prev));
+      })
+      .catch(() => {
+        setAgentStatus("error");
+      });
+  }, [tripConfig, handlePrivacyEvent]);
 
   const isRunning = agentStatus === "running";
 

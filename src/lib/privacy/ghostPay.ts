@@ -3,6 +3,7 @@ import dotenv from "dotenv";
 dotenv.config({ path: ".env.local" });
 
 import { createEphemeralWallet } from "../wallets/ephemeral";
+import { resolveParamsForPath } from "../config/privacyConfig";
 import {
   x402Client,
   wrapFetchWithPayment,
@@ -53,8 +54,13 @@ export async function ghostPay<T = any>(
 ): Promise<T> {
   const currentCallId = nextCallId++;
 
-  // STEP 1: Random delay (1500–6000ms) — prevents timing correlation
-  const delayMs = Math.floor(Math.random() * 4500 + 1500);
+  // Resolve privacy params for this path (respects per-seller overrides)
+  const params = resolveParamsForPath(path);
+
+  // STEP 1: Random delay — prevents timing correlation
+  const delayMs = Math.floor(
+    Math.random() * (params.delayMaxMs - params.delayMinMs) + params.delayMinMs
+  );
   onEvent?.({
     type: "delay_applied",
     callId: currentCallId,
@@ -62,8 +68,11 @@ export async function ghostPay<T = any>(
   });
   await new Promise((r) => setTimeout(r, delayMs));
 
-  // STEP 2: Create ephemeral wallet (fresh throwaway per call)
-  const wallet = await createEphemeralWallet();
+  // STEP 2: Create ephemeral wallet with config-driven funding band
+  const wallet = await createEphemeralWallet({
+    fundingMinUsdc: params.fundingMinUsdc,
+    fundingMaxUsdc: params.fundingMaxUsdc,
+  });
   onEvent?.({
     type: "wallet_created",
     callId: currentCallId,

@@ -46,15 +46,20 @@ export type EphemeralWallet = {
 };
 
 // ── Main factory ────────────────────────────────────────────────────────
-export async function createEphemeralWallet(): Promise<EphemeralWallet> {
+export async function createEphemeralWallet(opts?: {
+  fundingMinUsdc?: string;
+  fundingMaxUsdc?: string;
+}): Promise<EphemeralWallet> {
   // STEP 1: Generate a fresh private key entirely in memory
   let privateKey = generatePrivateKey();
 
   // STEP 2: Derive account from the key
   const account = privateKeyToAccount(privateKey);
 
-  // STEP 3: Randomize funding amount between 0.03 and 0.09 USDC
-  const amount = (Math.random() * 0.06 + 0.03).toFixed(4);
+  // STEP 3: Randomize funding amount within the configured band
+  const minUsdc = parseFloat(opts?.fundingMinUsdc ?? "0.03");
+  const maxUsdc = parseFloat(opts?.fundingMaxUsdc ?? "0.09");
+  const amount = (Math.random() * (maxUsdc - minUsdc) + minUsdc).toFixed(4);
   const amountParsed = parseUnits(amount, 6);
 
   // STEP 4: Fund from control wallet

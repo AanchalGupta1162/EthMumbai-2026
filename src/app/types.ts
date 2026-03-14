@@ -7,10 +7,11 @@ export interface TripConfig {
   maxFare: number;
   budget: number;
   autoBook: boolean;
+  passenger: { name: string; email: string };
 }
 
 // ──────────────────────────────────────────
-// Agent events
+// Agent events (UI display format)
 // ──────────────────────────────────────────
 export type AgentEventType =
   | "agent_start"
@@ -21,7 +22,8 @@ export type AgentEventType =
   | "booking_triggered"
   | "booked"
   | "budget_exhausted"
-  | "agent_done";
+  | "agent_done"
+  | "privacy_event";
 
 export type AgentStepStatus = "pending" | "active" | "done" | "error";
 
@@ -58,11 +60,13 @@ export interface PrivacyEvent {
 // ──────────────────────────────────────────
 export interface BookingResult {
   bookingId: string;
+  ticketNumber: string;
   airline: string;
   from: string;
   to: string;
   fare: number;
   date: string;
+  passenger: { name: string; email: string };
   totalPaid: number;
   privacyCalls: number;
 }

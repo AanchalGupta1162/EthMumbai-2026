@@ -129,6 +129,44 @@ export default function TripForm({
         </button>
       </div>
 
+      {/* Passenger name */}
+      <label className="flex flex-col gap-1.5">
+        <span className="text-xs text-muted-dark font-medium">
+          Passenger Name
+        </span>
+        <input
+          type="text"
+          value={config.passenger?.name ?? ""}
+          onChange={(e) =>
+            update({
+              passenger: { ...config.passenger, name: e.target.value },
+            })
+          }
+          disabled={disabled}
+          placeholder="John Doe"
+          className="bg-surface border border-white/5 rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-emerald-400/50 disabled:opacity-50 transition-colors"
+        />
+      </label>
+
+      {/* Passenger email */}
+      <label className="flex flex-col gap-1.5">
+        <span className="text-xs text-muted-dark font-medium">
+          Passenger Email
+        </span>
+        <input
+          type="email"
+          value={config.passenger?.email ?? ""}
+          onChange={(e) =>
+            update({
+              passenger: { ...config.passenger, email: e.target.value },
+            })
+          }
+          disabled={disabled}
+          placeholder="john@example.com"
+          className="bg-surface border border-white/5 rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-zinc-600 focus:outline-none focus:ring-1 focus:ring-emerald-400/50 disabled:opacity-50 transition-colors"
+        />
+      </label>
+
       {/* CTA */}
       <button
         onClick={onStart}

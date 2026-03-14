@@ -15,6 +15,7 @@ const policy: TripPolicy = {
   maxFare: 4500,
   budget: 10000,
   autoBook: true,
+  passenger: { name: "Test User", email: "test@cloak402.dev" },
 };
 
 async function main() {

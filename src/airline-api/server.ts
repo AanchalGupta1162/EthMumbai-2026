@@ -66,13 +66,23 @@ app.post("/search-flights", (req, res) => {
 });
 
 app.post("/book-flight", (req, res) => {
-  const { flightId } = req.body;
+  const { flightId, passenger } = req.body;
+
+  // Validate passenger identity
+  if (!passenger?.name || !passenger?.email) {
+    return res.status(400).json({ error: "passenger.name and passenger.email are required" });
+  }
+
   const flight = FLIGHTS.find((f) => f.id === flightId);
   if (!flight) return res.status(404).json({ error: "Flight not found" });
 
+  const ticketNumber = `TKT-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
   res.json({
     bookingId: `BK${Date.now()}`,
+    ticketNumber,
     flight,
+    passenger: { name: passenger.name, email: passenger.email },
     status: "CONFIRMED",
     bookedAt: Date.now(),
   });

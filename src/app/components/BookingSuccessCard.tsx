@@ -41,7 +41,7 @@ export default function BookingSuccessCard({
         </div>
 
         <h3 className="text-xl font-bold text-center mb-1">
-          Booking Confirmed
+          Ticket Booked ✓
         </h3>
         <p className="text-sm text-muted-dark text-center mb-6">
           Your flight has been booked privately
@@ -67,10 +67,32 @@ export default function BookingSuccessCard({
             <span className="text-muted-dark">Date</span>
             <span className="font-medium">{booking.date}</span>
           </div>
+
+          <div className="border-t border-white/5 pt-3 mt-3" />
+
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-dark">Passenger</span>
+            <span className="font-medium">{booking.passenger.name}</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-dark">Email</span>
+            <span className="font-mono text-xs text-cyan-400">
+              {booking.passenger.email}
+            </span>
+          </div>
+
+          <div className="border-t border-white/5 pt-3 mt-3" />
+
           <div className="flex justify-between text-sm">
             <span className="text-muted-dark">Booking ID</span>
             <span className="font-mono text-xs text-cyan-400">
               {booking.bookingId}
+            </span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-muted-dark">Ticket Number</span>
+            <span className="font-mono text-xs text-emerald-400">
+              {booking.ticketNumber}
             </span>
           </div>
 
@@ -78,7 +100,7 @@ export default function BookingSuccessCard({
             <div className="flex justify-between text-sm">
               <span className="text-muted-dark">Total onchain cost</span>
               <span className="font-mono text-emerald-400">
-                {booking.totalPaid} ETH
+                {booking.totalPaid} USDC
               </span>
             </div>
             <div className="flex justify-between text-sm mt-1">

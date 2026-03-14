@@ -148,11 +148,13 @@ export function createMockPrivacyEvent(index: number): PrivacyEvent {
 // ── Mock booking result ─────────────────────
 export const MOCK_BOOKING: BookingResult = {
   bookingId: "BK" + Date.now(),
+  ticketNumber: "TKT-MOCK01",
   airline: "SpiceJet",
   from: "BOM",
   to: "BLR",
   fare: 3800,
   date: "2026-03-21",
+  passenger: { name: "Demo User", email: "demo@cloak402.dev" },
   totalPaid: 0.006,
   privacyCalls: 2,
 };
