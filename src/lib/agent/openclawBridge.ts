@@ -80,7 +80,7 @@ function parseAgentOutput(line: string): AgentEvent | null {
     if (obj.type === "message" || obj.type === "text" || obj.type === "assistant") {
       const text = obj.content ?? obj.text ?? obj.message ?? "";
       if (text) {
-        return { type: "agent_message" as AgentEvent["type"], data: { text } };
+        return { type: "agent_message" as const, data: { text } };
       }
     }
 
@@ -89,7 +89,7 @@ function parseAgentOutput(line: string): AgentEvent | null {
     // Non-JSON line — could be an agent text response without JSON wrapper
     const trimmed = line.trim();
     if (trimmed && !trimmed.startsWith("[") && !trimmed.startsWith("{")) {
-      return { type: "agent_message" as AgentEvent["type"], data: { text: trimmed } };
+      return { type: "agent_message" as const, data: { text: trimmed } };
     }
     return null;
   }
