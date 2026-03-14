@@ -19,23 +19,23 @@ async function main() {
       switch (event.type) {
         case "delay_applied":
           console.log(
-            `${ts()} ⏳ [call #${event.callId}] delay applied: ${event.data.ms}ms`
+            `${ts()} ⏳ [call #${event.callId}] delay applied: ${event.delayMs}ms`
           );
           break;
         case "wallet_created":
           console.log(
-            `${ts()} 🆕 [call #${event.callId}] wallet created: ${event.data.address}`
+            `${ts()} 🆕 [call #${event.callId}] wallet created: ${event.ephemeralAddress}`
           );
           console.log(
-            `${ts()}    funded: ${event.data.amount} USDC`
+            `${ts()}    funded: ${event.fundingAmountUsdc} USDC`
           );
           break;
         case "payment_sent":
           console.log(
-            `${ts()} 💸 [call #${event.callId}] payment tx: ${event.data.txHash ?? "n/a"}`
+            `${ts()} 💸 [call #${event.callId}] payment tx: ${event.settleTxHash || "n/a"}`
           );
           console.log(
-            `${ts()}    basescan: ${event.data.scanUrl ?? "n/a"}`
+            `${ts()}    seller: ${event.sellerUrl || "n/a"}`
           );
           break;
         case "data_received":
@@ -45,7 +45,12 @@ async function main() {
           break;
         case "wallet_destroyed":
           console.log(
-            `${ts()} 🔥 [call #${event.callId}] wallet destroyed: ${event.data.address}`
+            `${ts()} 🔥 [call #${event.callId}] wallet destroyed: ${event.ephemeralAddress}`
+          );
+          break;
+        case "error":
+          console.log(
+            `${ts()} ❌ [call #${event.callId}] error at ${event.stage}: ${event.errorMessage}`
           );
           break;
       }

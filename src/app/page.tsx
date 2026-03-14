@@ -25,10 +25,8 @@ function truncateAddr(addr: string) {
 }
 
 /** Map a raw backend AgentEvent into the UI's display format */
-function toUiAgentEvent(raw: {
-  type: string;
-  data: Record<string, unknown>;
-}): AgentEvent | null {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function toUiAgentEvent(raw: Record<string, any>): AgentEvent | null {
   const now = Date.now();
   switch (raw.type) {
     case "agent_start":
@@ -36,7 +34,7 @@ function toUiAgentEvent(raw: {
         id: uid(),
         type: "agent_start",
         label: "Agent initialized",
-        detail: `Monitoring fares for ${(raw.data.policy as Record<string, unknown>)?.from ?? "?"} → ${(raw.data.policy as Record<string, unknown>)?.to ?? "?"}`,
+        detail: `Monitoring fares for ${raw.data?.policy?.from ?? "?"} → ${raw.data?.policy?.to ?? "?"}`,
         status: "done",
         timestamp: now,
       };
@@ -44,59 +42,53 @@ function toUiAgentEvent(raw: {
       return {
         id: uid(),
         type: "checking_fares",
-        label: `Checking fares — attempt #${raw.data.attempt}`,
+        label: `Checking fares — attempt #${raw.data?.attempt}`,
         detail: "Querying airline fare endpoint…",
         status: "active",
         timestamp: now,
       };
-    case "fare_found": {
-      const f = raw.data.flight as Record<string, unknown>;
+    case "fare_found":
       return {
         id: uid(),
         type: "fare_found",
         label: "Fare match found",
-        detail: `${f?.airline} ${f?.from}→${f?.to} ₹${Number(f?.fare).toLocaleString()}`,
+        detail: `${raw.data?.flight?.airline} ${raw.data?.flight?.from}→${raw.data?.flight?.to} ₹${Number(raw.data?.flight?.fare).toLocaleString()}`,
         status: "done",
         timestamp: now,
       };
-    }
     case "no_match":
       return {
         id: uid(),
         type: "no_match",
         label: "No matching fares",
-        detail: `Attempt #${raw.data.attempt} — will retry`,
+        detail: `Attempt #${raw.data?.attempt} — will retry`,
         status: "done",
         timestamp: now,
       };
-    case "booking_triggered": {
-      const f = raw.data.flight as Record<string, unknown>;
+    case "booking_triggered":
       return {
         id: uid(),
         type: "booking_triggered",
         label: "Booking triggered",
-        detail: `Auto-booking ${f?.airline} ${f?.from}→${f?.to}`,
+        detail: `Auto-booking ${raw.data?.flight?.airline} ${raw.data?.flight?.from}→${raw.data?.flight?.to}`,
         status: "active",
         timestamp: now,
       };
-    }
-    case "booked": {
-      const b = raw.data.booking as Record<string, unknown>;
+    case "booked":
       return {
         id: uid(),
         type: "booked",
         label: "Booking confirmed ✓",
-        detail: `${b?.bookingId} — ticket ${b?.ticketNumber}`,
+        detail: `${raw.data?.booking?.bookingId} — ticket ${raw.data?.booking?.ticketNumber}`,
         status: "done",
         timestamp: now,
       };
-    }
     case "budget_exhausted":
       return {
         id: uid(),
         type: "budget_exhausted",
         label: "Budget exhausted",
-        detail: `Spent: ${raw.data.spent}`,
+        detail: `Spent: ${raw.data?.spent}`,
         status: "done",
         timestamp: now,
       };
@@ -106,6 +98,24 @@ function toUiAgentEvent(raw: {
         type: "agent_done",
         label: "Agent completed",
         detail: "All tasks finished — your identity was never revealed",
+        status: "done",
+        timestamp: now,
+      };
+    case "policy_check":
+      return {
+        id: uid(),
+        type: "checking_fares",
+        label: `🛡 Policy check: ${raw.path}`,
+        detail: `${raw.allowed ? "ALLOWED" : "BLOCKED"} — ${raw.reason}`,
+        status: "done",
+        timestamp: now,
+      };
+    case "spend_update":
+      return {
+        id: uid(),
+        type: "payment_required",
+        label: `💰 Spend update`,
+        detail: `${raw.totalSpentUsdc} / ${raw.budgetUsdc} USDC — remaining: ${raw.remainingUsdc}`,
         status: "done",
         timestamp: now,
       };
@@ -159,10 +169,11 @@ export default function Home() {
     setPrivacyEvents(asEvents);
   }, []);
 
-  // ── Process a raw backend privacy event ────
+  // ── Process a raw backend privacy event (new flattened format) ────
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const handlePrivacyEvent = useCallback(
-    (pe: { type: string; callId: number; data: Record<string, unknown> }) => {
-      const callId = pe.callId;
+    (pe: Record<string, any>) => {
+      const callId = pe.callId as number;
       if (!privacyCallsRef.current.has(callId)) {
         privacyCallsRef.current.set(callId, {
           callId,
@@ -181,12 +192,13 @@ export default function Home() {
           record.actions.push({ action: "delay_applied", timestamp: now });
           break;
         case "wallet_created":
-          record.walletAddress = String(pe.data.address ?? "");
-          record.fundingAmount = `${pe.data.amount ?? "?"} USDC`;
+          record.walletAddress = String(pe.ephemeralAddress ?? "");
+          record.fundingAmount = `${pe.fundingAmountUsdc ?? "?"} USDC`;
+          record.txHash = String(pe.fundingTxHash ?? "");
           record.actions.push({ action: "wallet_created", timestamp: now });
           break;
         case "payment_sent":
-          record.txHash = String(pe.data.txHash ?? pe.data.scanUrl ?? "");
+          if (pe.settleTxHash) record.txHash = String(pe.settleTxHash);
           record.actions.push({ action: "payment_sent", timestamp: now });
           break;
         case "data_received":
@@ -194,6 +206,9 @@ export default function Home() {
           break;
         case "wallet_destroyed":
           record.actions.push({ action: "wallet_destroyed", timestamp: now });
+          record.status = "complete";
+          break;
+        case "error":
           record.status = "complete";
           break;
       }
@@ -252,18 +267,12 @@ export default function Home() {
             if (!jsonStr) continue;
 
             try {
-              const raw = JSON.parse(jsonStr) as {
-                type: string;
-                data: Record<string, unknown>;
-              };
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const raw = JSON.parse(jsonStr) as Record<string, any>;
 
-              // Handle privacy events (nested from ghostPay)
+              // Handle privacy events (nested from ghostPay, now flattened)
               if (raw.type === "privacy_event") {
-                const pe = raw.data as {
-                  type: string;
-                  callId: number;
-                  data: Record<string, unknown>;
-                };
+                const pe = raw.data as Record<string, any>;
                 handlePrivacyEvent(pe);
                 privacyCountRef.current++;
 
@@ -279,7 +288,7 @@ export default function Home() {
                         id: uid(),
                         type: "payment_required" as const,
                         label: "x402 payment sent",
-                        detail: `Ephemeral wallet ${truncateAddr(String(pe.data.txHash ?? ""))}`,
+                        detail: `Ephemeral ${truncateAddr(String(pe.ephemeralAddress ?? ""))} → ${pe.amountPaidUsdc ?? "?"} USDC`,
                         status: "done" as const,
                         timestamp: Date.now(),
                       },

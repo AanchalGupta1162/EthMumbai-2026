@@ -17,6 +17,8 @@ const ICON_MAP: Record<string, string> = {
   booked: "✅",
   budget_exhausted: "⚠️",
   agent_done: "🏁",
+  policy_check: "🛡",
+  spend_update: "💰",
 };
 
 function StatusChip({ status }: { status: string }) {

@@ -67,17 +67,17 @@ async function main() {
         switch (pe.type) {
           case "delay_applied":
             console.log(
-              `${ts()}   🔒 privacy [call #${pe.callId}] delay: ${pe.data.ms}ms`
+              `${ts()}   🔒 privacy [call #${pe.callId}] delay: ${pe.delayMs}ms`
             );
             break;
           case "wallet_created":
             console.log(
-              `${ts()}   🔒 privacy [call #${pe.callId}] wallet: ${pe.data.address} (${pe.data.amount} USDC)`
+              `${ts()}   🔒 privacy [call #${pe.callId}] wallet: ${pe.ephemeralAddress} (${pe.fundingAmountUsdc} USDC)`
             );
             break;
           case "payment_sent":
             console.log(
-              `${ts()}   🔒 privacy [call #${pe.callId}] payment tx: ${pe.data.scanUrl ?? "n/a"}`
+              `${ts()}   🔒 privacy [call #${pe.callId}] payment tx: ${pe.settleTxHash || "n/a"}`
             );
             break;
           case "data_received":
@@ -87,7 +87,12 @@ async function main() {
             break;
           case "wallet_destroyed":
             console.log(
-              `${ts()}   🔒 privacy [call #${pe.callId}] wallet destroyed: ${pe.data.address}`
+              `${ts()}   🔒 privacy [call #${pe.callId}] wallet destroyed: ${pe.ephemeralAddress}`
+            );
+            break;
+          case "error":
+            console.log(
+              `${ts()}   ❌ privacy [call #${pe.callId}] error: ${pe.errorMessage}`
             );
             break;
         }
