@@ -23,7 +23,8 @@ export type AgentEventType =
   | "booked"
   | "budget_exhausted"
   | "agent_done"
-  | "privacy_event";
+  | "privacy_event"
+  | "agent_message";
 
 export type AgentStepStatus = "pending" | "active" | "done" | "error";
 

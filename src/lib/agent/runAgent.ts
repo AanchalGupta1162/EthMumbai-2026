@@ -59,7 +59,8 @@ export type AgentEvent =
       budgetUsdc: string;
       remainingUsdc: string;
       timestamp: number;
-    };
+    }
+  | { type: "agent_message"; data: { text: string } };
 
 // ── Main agent loop ─────────────────────────────────────────────────────
 

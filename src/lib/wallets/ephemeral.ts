@@ -164,6 +164,14 @@ async function fundDirect(
   });
 
   await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+  // STEP 4b: Send a small amount of ETH for gas (needed for x402 payment approval)
+  const ethTxHash = await controlWallet.sendTransaction({
+    to: ephemeralAddress,
+    value: parseUnits("0.0005", 18), // ~0.0005 ETH for gas
+  });
+  await publicClient.waitForTransactionReceipt({ hash: ethTxHash });
+
   return txHash;
 }
 
